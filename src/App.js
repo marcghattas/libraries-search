@@ -3,45 +3,41 @@ import './App.css';
 import { AgGridReact } from 'ag-grid-react';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-alpine.css';
-import { TextField, Box, Autocomplete, Button, Grid, CircularProgress, Dialog, DialogContent, DialogActions, Typography } from '@mui/material';
+import { TextField, Box, Autocomplete, Button, Grid, CircularProgress, Dialog, DialogContent, DialogActions, Typography, Menu, MenuItem } from '@mui/material';
 import axios from 'axios';
 
-// ButtonCellRenderer component
-const ButtonCellRenderer = (props) => {
-  const handleAccept = () => {
-    console.log('Accepted:', props.data);
-  };
+// Function to fetch package data from the NPM registry
+const fetchPackageData = async (name, version = 'latest') => {
+  try {
+    // Make a request to fetch data about the package
+    const response = await axios.get(`https://registry.npmjs.org/${name}/${version}`);
+    const packageData = response.data;
 
-  const handleDecline = () => {
-    console.log('Declined:', props.data);
-  };
-
-  return (
-    <Box>
-      <Button
-        variant="contained"
-        color="primary"
-        onClick={handleAccept}
-        sx={{ marginRight: '5px' }}
-      >
-        Accept
-      </Button>
-      <Button
-        variant="outlined"
-        color="error"
-        onClick={handleDecline}
-      >
-        Decline
-      </Button>
-    </Box>
-  );
+    // Return a formatted package data object
+    return {
+      name: packageData.name,
+      version: packageData.version,
+      repourl: packageData.repository ? packageData.repository.url : 'N/A',
+      tarball: packageData.dist ? packageData.dist.tarball : 'N/A',
+      licence: packageData.license || 'N/A',
+      author: packageData.author ? packageData.author.name : 'N/A',
+      description: packageData.description || 'N/A',
+      status: 'pending',  // Initial status of the package
+    };
+  } catch (error) {
+    // Log error and return null if fetching fails
+    console.error('Error fetching package data:', error);
+    return null;
+  }
 };
 
-// App component
 const App = () => {
+  // Refs for managing references to DOM elements
   const gridRef = useRef(null);
   const searchInputRef = useRef(null);
   const fileInputRef = useRef(null);
+
+  // State variables
   const [searchText, setSearchText] = useState('');
   const [rowData, setRowData] = useState([]);
   const [filteredRowData, setFilteredRowData] = useState([]);
@@ -51,66 +47,128 @@ const App = () => {
   const [openModal, setOpenModal] = useState(false);
   const [selectedLibrary, setSelectedLibrary] = useState(null);
   const [editableVersion, setEditableVersion] = useState('');
+  const [anchorEl, setAnchorEl] = useState(null);
+  const [columnsVisibility, setColumnsVisibility] = useState({
+    name: true,
+    version: true,
+    repourl: true,
+    tarball: true,
+    licence: true,
+    author: true,
+    description: true,
+    status: true,
+    respond: true
+  });
 
-  // Column definitions for ag-Grid
+  // Cell renderer for the 'Respond' column in the data grid
+  const respondCellRenderer = (params) => {
+    if (params.data.status === 'accepted' || params.data.status === 'rejected') {
+      return null;  // Do not render buttons if status is already accepted or rejected
+    }    
+    
+    // Handler for the 'Accept' button click
+    const handleAcceptClick = () => {
+      const updatedRowData = filteredRowData.map(row => 
+        row.name === params.data.name ? { ...row, status: 'accepted' } : row
+      );
+      setFilteredRowData(updatedRowData);
+    };
+
+    // Handler for the 'Reject' button click
+    const handleRejectClick = () => {
+      const updatedRowData = filteredRowData.map(row => 
+        row.name === params.data.name ? { ...row, status: 'rejected' } : row
+      );
+      setFilteredRowData(updatedRowData);
+    };
+
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '5px', height: '100%' }}>
+        <Button
+          onClick={handleAcceptClick} 
+          sx={{color:'green', fontSize:"7px", backgroundColor: '#f7f7f7'}}
+        >
+          <strong>Accept</strong>
+        </Button>
+        <Button 
+          onClick={handleRejectClick} 
+          sx={{color:'red', fontSize:"7px", backgroundColor: '#f7f7f7'}}
+        >
+          <strong>Reject</strong>
+        </Button>
+      </div>
+    );
+  };
+
+  // Column definitions for the data grid
   const columnDefs = [
-    { headerName: "Name", field: "name" },
-    { headerName: "Version", field: "version" },
-    { headerName: "Repo URL", field: "repourl" },
-    { headerName: "Tarball", field: "tarball" },
-    { headerName: "Licence", field: "licence" },
-    { headerName: "Author", field: "author" },
-    { headerName: "Description", field: "description" },
+    { headerName: "Name", field: "name", hide: !columnsVisibility.name },
+    { headerName: "Version", field: "version", hide: !columnsVisibility.version },
+    { headerName: "Repo URL", field: "repourl", hide: !columnsVisibility.repourl },
+    { headerName: "Tarball", field: "tarball", hide: !columnsVisibility.tarball },
+    { headerName: "Licence", field: "licence", hide: !columnsVisibility.licence },
+    { headerName: "Author", field: "author", hide: !columnsVisibility.author },
+    { headerName: "Description", field: "description", hide: !columnsVisibility.description },
     {
       headerName: "Status",
       field: "status",
       cellClassRules: {
+        'accepted-status': (params) => params.value === 'accepted',
+        'rejected-status': (params) => params.value === 'rejected',
         'pending-status': (params) => params.value === 'pending'
-      }
+      },
+      hide: !columnsVisibility.status
     },
     {
       headerName: "Respond",
       field: "respond",
-      cellRenderer: 'buttonCellRenderer',
-    },
+      cellRenderer: respondCellRenderer,
+      hide: !columnsVisibility.respond
+    }
   ];
 
-  // Fetch package data
-  const fetchPackageData = async (packageName, version) => {
-    try {
-      const response = await axios.get(`https://registry.npmjs.org/${packageName}`);
-      const data = response.data;
-      const latestVersion = version || data['dist-tags'].latest;
-      const versionData = data.versions[latestVersion];
-
-      return {
-        name: data.name,
-        version: latestVersion,
-        repourl: data.repository?.url || 'N/A',
-        tarball: versionData.dist?.tarball || 'N/A',
-        licence: versionData.license || 'N/A',
-        author: versionData.author?.name || 'Unknown',
-        description: data.description || 'No description',
-        status: 'pending',
-      };
-    } catch (error) {
-      console.error('Error fetching package data from NPM registry:', error);
-      return null;
-    }
+  // Open the column visibility menu
+  const handleClick = (event) => {
+    setAnchorEl(event.currentTarget);
   };
 
-  // Handle search input change
+  // Close the column visibility menu
+  const handleClose = () => {
+    setAnchorEl(null);
+  };
+
+  // Toggle visibility of columns
+  const handleColumnVisibilityChange = (columnKey) => {
+    setColumnsVisibility(prevState => ({
+      ...prevState,
+      [columnKey]: !prevState[columnKey]
+    }));
+    handleClose();
+  };
+
+  // Menu items for toggling column visibility
+  const menuItems = [
+    { key: 'repourl', label: 'Repo URL' },
+    { key: 'tarball', label: 'Tarball' },
+    { key: 'licence', label: 'Licence' },
+    { key: 'author', label: 'Author' },
+    { key: 'description', label: 'Description' },
+    { key: 'status', label: 'Status' },
+    { key: 'respond', label: 'Respond' },
+  ];
+
+  // Effect for debouncing the search text input
   useEffect(() => {
-    const handler = setTimeout(() => {
+    const timer = setTimeout(() => {
       setDebouncedSearchText(searchText);
     }, 500);
 
     return () => {
-      clearTimeout(handler);
+      clearTimeout(timer);
     };
   }, [searchText]);
 
-  // Fetch package names and data
+  // Effect to fetch package names based on search text
   useEffect(() => {
     const fetchPackageNames = async () => {
       if (!debouncedSearchText) {
@@ -122,6 +180,7 @@ const App = () => {
       setLoading(true);
 
       try {
+        // Fetch package names from NPM registry based on search text
         const response = await axios.get(`https://registry.npmjs.org/-/v1/search?text=${debouncedSearchText}&size=10`);
         const packageNames = response.data.objects.map(pkg => pkg.package.name);
         const packageDataPromises = packageNames.map(name => fetchPackageData(name));
@@ -130,6 +189,7 @@ const App = () => {
         setOptions(packageNames);
         setRowData(validPackageData);
       } catch (error) {
+        // Handle errors and reset states
         console.error('Error fetching package names from NPM registry:', error);
         setOptions([]);
         setRowData([]);
@@ -141,12 +201,12 @@ const App = () => {
     fetchPackageNames();
   }, [debouncedSearchText]);
 
-  // Update options based on rowData
+  // Effect to update options based on row data
   useEffect(() => {
     setOptions(rowData.map(item => item.name));
   }, [rowData]);
 
-  // Handle grid resize
+  // Effect to handle grid resizing
   useEffect(() => {
     const handleResize = () => {
       if (gridRef.current && gridRef.current.api) {
@@ -157,7 +217,14 @@ const App = () => {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Handle search change
+  // Effect to adjust column sizing when visibility changes
+  useEffect(() => {
+    if (gridRef.current && gridRef.current.api) {
+      gridRef.current.api.sizeColumnsToFit();
+    }
+  }, [columnsVisibility]);
+
+  // Handle search text input change
   const handleSearchChange = (event, newValue) => {
     setSearchText(newValue);
     const selectedRow = rowData.find(item => item.name === newValue);
@@ -165,13 +232,14 @@ const App = () => {
     setEditableVersion(selectedRow?.version || '');
   };
 
-  // Open modal
+  // Open the modal for adding a library
   const handleOpenModal = () => {
     setSearchText('');
     setSelectedLibrary(null);
     setEditableVersion('');
     setOpenModal(true);
 
+    // Focus on search input after a short delay
     setTimeout(() => {
       if (searchInputRef.current) {
         searchInputRef.current.focus();
@@ -179,17 +247,17 @@ const App = () => {
     }, 100);
   };
 
-  // Close modal
+  // Close the modal
   const handleCloseModal = () => {
     setOpenModal(false);
   };
 
-  // Handle version change
+  // Handle changes to the editable version input
   const handleVersionChange = (event) => {
     setEditableVersion(event.target.value);
   };
 
-  // Add library to table
+  // Add the selected library to the table with specified version
   const handleAddToTable = async () => {
     if (selectedLibrary) {
       const updatedLibrary = await fetchPackageData(selectedLibrary.name, editableVersion);
@@ -206,14 +274,14 @@ const App = () => {
     }
   };
 
-  // Handle file upload click
+  // Trigger file upload dialog
   const handleFileUploadClick = () => {
     if (fileInputRef.current) {
       fileInputRef.current.click();
     }
   };
 
-  // Handle file change
+  // Handle file selection and processing
   const handleFileChange = async (event) => {
     const file = event.target.files[0];
     if (file) {
@@ -234,6 +302,7 @@ const App = () => {
 
               const validPackageData = packageDataResults.filter((result) => result !== null);
 
+              // Update filtered row data with new package data
               setFilteredRowData((prevData) => {
                 const newRowData = [...prevData];
                 validPackageData.forEach((newPackage) => {
@@ -257,7 +326,7 @@ const App = () => {
     }
   };
 
-  // Handle grid ready event
+  // Callback to handle grid initialization
   const onGridReady = (params) => {
     if (params.api) {
       params.api.sizeColumnsToFit();
@@ -278,12 +347,34 @@ const App = () => {
             font-weight: bold;
           }
         `}
+        {`
+          .accepted-status {
+            color: green;
+          }
+          .ag-cell {
+            font-weight: normal;
+          }
+          .ag-cell .pending-status {
+            font-weight: bold;
+          }
+        `}
+        {`
+          .rejected-status {
+            color: red;
+          }
+          .ag-cell {
+            font-weight: normal;
+          }
+          .ag-cell .pending-status {
+            font-weight: bold;
+          }
+        `}
       </style>
       <div className="App">
         <h1>Libraries Info</h1>
         <Box>
           <Grid container spacing={2}>
-            <Grid item xs={12} md={9}>
+            <Grid item xs={12} md={8}>
               <Box sx={{ height: '50px', backgroundColor: '#f7f7f7', border: '1px solid #b9bec7', borderRadius: '5px', height: '55px' }}></Box>
             </Grid>
             <Grid item xs={12} md={1.5}>
@@ -311,6 +402,30 @@ const App = () => {
                 onChange={handleFileChange}
               />
             </Grid>
+            <Grid item xs={12} md={1}>
+              <Button
+                fullWidth
+                sx={{ height: '55px', fontSize: '16px', backgroundColor: '#f7f7f7', color: 'black' }}
+                onClick={handleClick}
+              >
+                <strong>▼</strong>
+              </Button>
+              <Menu
+                anchorEl={anchorEl}
+                open={Boolean(anchorEl)}
+                onClose={handleClose}
+              >
+                {menuItems.map(item => (
+                  <MenuItem
+                    key={item.key}
+                    onClick={() => handleColumnVisibilityChange(item.key)}
+                  >
+                    {columnsVisibility[item.key] ? 'Hide ' : 'Show '}
+                    {item.label}
+                  </MenuItem>
+                ))}
+              </Menu>
+            </Grid>
           </Grid>
 
           <div className="ag-theme-alpine" style={{ height: 400, width: '100%', marginTop: '20px' }}>
@@ -319,7 +434,6 @@ const App = () => {
               columnDefs={columnDefs}
               rowData={filteredRowData}
               onGridReady={onGridReady}
-              frameworkComponents={{ buttonCellRenderer: ButtonCellRenderer }}
               domLayout="autoHeight"
             />
           </div>
